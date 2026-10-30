@@ -1,0 +1,16 @@
+{
+  "name": "duelo-de-silabas",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Relevo en tiempo real para jugar Duelo de Sílabas en línea",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "8.18.0"
+  }
+}

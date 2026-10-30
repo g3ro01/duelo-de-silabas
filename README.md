@@ -12,3 +12,9 @@ Es una sola página estática (`index.html`), sin servidor. El progreso se guard
 El modo en línea entre dos tabletas solo funciona dentro de Claude; en esta versión aparece como no disponible.
 
 Voces generadas con [Piper](https://github.com/rhasspy/piper): es_MX-claude-high (Apache-2.0), es_MX-ald-medium (dominio público) y es_AR-daniela-high, entrenado con OpenSLR 61 (CC BY-SA 4.0).
+
+## Juego en línea
+
+`server.js` es un relevo por WebSocket (servicio web en Render) que conecta a los niños que escriben el mismo código.
+No guarda nada: cada sala vive en memoria mientras haya alguien conectado, y solo acepta conexiones desde el sitio del juego.
+Dentro de Claude el juego usa la sala de Claude y no contacta este servidor.

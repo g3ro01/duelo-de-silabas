@@ -705,6 +705,7 @@ $("b-pz-back").onclick = $("b-set-back").onclick = () => show("v-lobby");
 function friendStep(step){
   $("friend-choice").hidden = step !== "choice"; $("friend-here").hidden = step !== "here"; $("friend-online").hidden = step !== "online";
   $("b-friend-back").onclick = () => step === "choice" ? show("v-lobby") : friendStep("choice");
+  if (step === "online" && typeof onlineReady === "function") onlineReady();
   if (step === "here") {
     const box = $("profiles2"); box.textContent = "";
     profiles.filter(p => p !== cur).forEach(p => box.append(profileCard(p, q => startLocal(true, q))));
@@ -1627,12 +1628,87 @@ $("b-maze-done").onclick = () => { maze = null; $("b-memo-done").onclick(); };
 // ---------- en línea ----------
 let lobby = null, R = null, named = false, me = null, code = "", counting = false, cheered = false;
 const cap = window.claude && window.claude.use ? window.claude.use("room") : Promise.resolve(null);
-cap.then(r => {
-  lobby = r;
-  $("online-status").textContent = r ? "Listo para jugar en línea." : "El juego en línea no está disponible aquí. Abre esta página con tu cuenta para jugar contra otro niño, o juega en este dispositivo.";
-  $("online-status").classList.toggle("err", !r);
-  $("b-create").disabled = $("b-join").disabled = !r;
-}).catch(() => { $("online-status").textContent = "El juego en línea no está disponible aquí."; });
+// Fuera de Claude (por ejemplo en Render) el juego en línea usa un relevo propio por WebSocket.
+// Este adaptador imita lo que el juego usa de la sala de Claude: join, presence, onPeers, peers y leave.
+const RELAY_HTTP = (() => {
+  try { const q = new URLSearchParams(location.search).get("relay"); if (q && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(q)) return q; } catch {}
+  return "https://duelo-de-silabas-ws.onrender.com";
+})();
+function relayRoom(httpUrl){
+  const wsUrl = httpUrl.replace(/^http/, "ws");
+  let ws = null, open = false, myPeer = null, wantRoom = null, pres = {}, list = [], retry = 0, waiters = [];
+  const listeners = new Set();
+  const tell = () => listeners.forEach(fn => { try { fn({ peers: list }); } catch {} });
+  function connect(){
+    ws = new WebSocket(wsUrl);
+    ws.onopen = () => {
+      open = true; retry = 0;
+      if (wantRoom) { ws.send(JSON.stringify({ t: "join", room: wantRoom })); ws.send(JSON.stringify({ t: "presence", patch: pres })); }
+      waiters.splice(0).forEach(w => w.ok());
+    };
+    ws.onmessage = e => {
+      let m; try { m = JSON.parse(e.data); } catch { return; }
+      if (m.t === "hello") myPeer = m.peer;
+      else if (m.t === "peers" && m.room === wantRoom) {
+        list = Object.freeze((m.peers || []).map(p => ({ peer: p.peer, presence: p.presence || {}, isMe: p.peer === myPeer, sameTab: p.peer === myPeer, by: null, guest: false, kind: "viewer", updatedAt: Date.now() })));
+        tell();
+      }
+    };
+    ws.onclose = () => {
+      open = false;
+      if (wantRoom) setTimeout(connect, Math.min(10000, 1000 * 2 ** retry++)); // reconecta mientras siga en una partida
+    };
+  }
+  const ready = () => new Promise((ok, fail) => {
+    if (open) return ok();
+    if (!ws || ws.readyState > 1) connect();
+    const w = { ok }; waiters.push(w);
+    setTimeout(() => { const i = waiters.indexOf(w); if (i >= 0) { waiters.splice(i, 1); fail(new Error("timeout")); } }, 90000);
+  });
+  const room = {
+    presence(patch){ for (const [k, v] of Object.entries(patch || {})) { if (v === null) delete pres[k]; else pres[k] = v; }
+      if (open) ws.send(JSON.stringify({ t: "presence", patch })); return Promise.resolve(); },
+    onPeers(fn){ listeners.add(fn); setTimeout(() => fn({ peers: list }), 0); return () => listeners.delete(fn); },
+    peers(){ return list; },
+    connected(){ return open; },
+    async leave(){ wantRoom = null; pres = {}; list = []; listeners.clear(); if (open) ws.send(JSON.stringify({ t: "leave" })); }
+  };
+  return {
+    relay: true,
+    async join(name){ await ready(); wantRoom = name; pres = {}; list = []; ws.send(JSON.stringify({ t: "join", room: name })); return room; },
+    presence: () => Promise.resolve(), onPeers: () => () => {}, peers: () => [], connected: () => open
+  };
+}
+// Despierta el relevo (en el plan gratis de Render duerme si nadie lo usa).
+let relayAwake = false, relayWaking = null;
+function wakeRelay(){
+  if (relayAwake) return Promise.resolve(true);
+  if (relayWaking) return relayWaking;
+  const t0 = Date.now();
+  relayWaking = (async () => {
+    while (Date.now() - t0 < 90000) {
+      try { const r = await fetch(RELAY_HTTP + "/health", { cache: "no-store" }); if (r.ok) { relayAwake = true; return true; } } catch {}
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    return false;
+  })().finally(() => { relayWaking = null; });
+  return relayWaking;
+}
+function onlineReady(){
+  if (!lobby || !lobby.relay || relayAwake) return;
+  $("b-create").disabled = $("b-join").disabled = true; $("online-status").classList.remove("err");
+  $("online-status").textContent = "Despertando el servidor… (la primera vez puede tardar un minuto)";
+  wakeRelay().then(ok => {
+    $("b-create").disabled = $("b-join").disabled = !ok;
+    $("online-status").textContent = ok ? "Listo para jugar en línea." : "No se pudo conectar. Revisa tu internet e intenta de nuevo.";
+    $("online-status").classList.toggle("err", !ok);
+  });
+}
+cap.catch(() => null).then(r => {
+  lobby = r || relayRoom(RELAY_HTTP);
+  if (r) { $("online-status").textContent = "Listo para jugar en línea."; $("b-create").disabled = $("b-join").disabled = false; }
+  else if (!$("friend-online").hidden) onlineReady();
+});
 $("b-create").disabled = $("b-join").disabled = true;
 
 function rivals(){
@@ -1652,7 +1728,8 @@ function publishMe(){
 async function enterRoom(c, host){
   code = c; const n = myNick();
   $("online-status").textContent = "Entrando…";
-  try { R = await lobby.join("sil-" + c); named = true; } catch { R = lobby; named = false; }
+  try { R = await lobby.join("sil-" + c); named = true; }
+  catch { if (lobby.relay) { $("online-status").textContent = "No se pudo conectar. Revisa tu internet e intenta de nuevo."; $("online-status").classList.add("err"); return; } R = lobby; named = false; }
   me = { nick: n, ava: myAva, g: 0, st: "wait", idx: 0, score: 0, errs: 0, marks: "", t: 0, lvl: level, host: !!host };
   if (!named) me.code = c;
   await R.presence(me).catch(() => {});
