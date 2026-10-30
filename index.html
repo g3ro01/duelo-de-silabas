@@ -170,7 +170,7 @@ label.lbl{font-weight:700;display:block;margin-bottom:6px}
 .btile.drag{transition:none;cursor:grabbing;z-index:5}
 .btile.gone{opacity:0;pointer-events:none}
 #tr-canvas{touch-action:none;background:var(--paper);border:2px solid var(--edge);border-radius:16px;max-width:100%}
-.tr-track{width:min(100%,340px);height:10px;border-radius:99px;background:var(--edge);overflow:hidden}
+.tr-track{width:min(100%,520px);height:10px;border-radius:99px;background:var(--edge);overflow:hidden}
 .tr-bar{height:100%;width:0;background:var(--ok);transition:width .15s}
 .narrow{max-width:520px;width:100%;margin:0 auto;gap:16px}
 .topline{display:flex;justify-content:space-between;align-items:center;gap:10px;min-height:52px}
@@ -429,7 +429,7 @@ input.bigin{font-family:var(--f-display);font-size:1.5rem;padding:14px 16px;text
 <div class="overlay" id="overlay" hidden></div>
 <div class="reveal" id="reveal" hidden><div class="rv-box"><div class="rv-praise" id="rv-praise"></div><div class="rv-pic" id="rv-pic"></div><div class="word" id="word" aria-live="polite"></div><div class="rv-pz-row" id="rv-pz-row" hidden><canvas class="rv-pz" id="rv-pz"></canvas><span id="rv-pz-lbl"></span></div></div></div>
 <div class="build" id="build" hidden><div class="bd-box"><button class="bd-x" id="b-leave4" type="button" aria-label="Salir del juego">✕</button><div class="bd-title">Arma la palabra</div><div class="bd-pic" id="bd-pic"></div><div class="bd-slots" id="bd-slots"></div><div class="bd-tiles" id="bd-tiles"></div><p class="status" id="bd-status" aria-live="polite"></p></div></div>
-<div class="build" id="trace" hidden><div class="bd-box"><button class="bd-x" id="b-leave5" type="button" aria-label="Salir del juego">✕</button><div class="bd-title">Traza <span id="tr-syl" class="tr-syl"></span> con tu dedo</div><canvas id="tr-canvas" aria-label="Zona para trazar"></canvas><div class="tr-track"><div class="tr-bar" id="tr-bar"></div></div><p class="status" id="tr-status" aria-live="polite"></p><div class="row" style="justify-content:center"><button class="btn" id="b-tr-clear">Borrar</button><button class="btn primary" id="b-tr-skip" hidden>Siguiente</button></div></div></div>
+<div class="build" id="trace" hidden><div class="bd-box"><button class="bd-x" id="b-leave5" type="button" aria-label="Salir del juego">✕</button><div class="bd-title">Escribe <span id="tr-syl" class="tr-syl"></span> con tu dedo</div><canvas id="tr-canvas" aria-label="Zona para trazar"></canvas><div class="tr-track"><div class="tr-bar" id="tr-bar"></div></div><p class="status" id="tr-status" aria-live="polite"></p><div class="row" style="justify-content:center"><button class="btn" id="b-tr-clear">Borrar</button><button class="btn primary" id="b-tr-skip" hidden>Siguiente</button></div></div></div>
 <div class="complete" id="complete" hidden><div class="cp-box"><div class="cp-title"><span class="emo">🧩</span> ¡Completaste la imagen!</div><canvas id="cp-canvas"></canvas><div class="cp-name" id="cp-name"></div><button class="btn primary" id="b-cp">¡Seguir jugando!</button></div></div>
 <canvas id="confetti" aria-hidden="true"></canvas>
 
@@ -1175,15 +1175,15 @@ function startBuild(r, done){
 
 // ---------- traza la sílaba con el dedo (cada 3 rondas) ----------
 function startTrace(r, done){
-  const g = G, text = r.t[1].slice(0, r.t[0].length);
+  const g = G, text = r.t[1];
   hideExtras();
   const cv = $("tr-canvas"), dpr = window.devicePixelRatio || 1;
-  const W = Math.min(340, innerWidth - 72), H = Math.round(W * .62);
+  const W = Math.min(520, innerWidth - 72), H = Math.round(Math.min(W * .62, 230));
   cv.style.width = W + "px"; cv.style.height = H + "px"; cv.width = W * dpr; cv.height = H * dpr;
   const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
   const font = tok("--f-display"), base = H * .74;
   let fs = H * .7; c.font = `700 ${fs}px ${font}`;
-  const tw = c.measureText(text).width; if (tw > W * .86) fs *= W * .86 / tw;
+  const tw = c.measureText(text).width; if (tw > W * .9) fs *= W * .9 / tw;
   // Puntos objetivo: dónde está la letra (se dibuja rellena fuera de pantalla y se muestrea cada 6 px).
   const off = document.createElement("canvas"); off.width = W; off.height = H;
   const oc = off.getContext("2d"); oc.font = `700 ${fs}px ${font}`; oc.textAlign = "center"; oc.fillStyle = "#000"; oc.fillText(text, W / 2, base);
@@ -1223,12 +1223,12 @@ function startTrace(r, done){
     const cov = progress(), prec = ink ? inkNear / ink : 0;
     if (cov >= .7 && prec >= .5) {
       ok = true; guide(true); $("tr-bar").style.width = "100%";
-      $("tr-status").textContent = "¡Excelente trazo!"; sfx.good(); confetti(cv);
-      setTimeout(() => { if (G === g) { $("trace").hidden = true; done(); } }, 1800);
+      $("tr-status").textContent = "¡Excelente! " + text; sfx.good(); confetti(cv);
+      setTimeout(() => { if (G === g) say([text], () => { if (G === g) { $("trace").hidden = true; done(); } }); }, 700);
       return;
     }
     $("tr-status").textContent = prec < .5 ? "Traza encima de los puntitos" : "¡Sigue los puntitos!";
-    if (strokes >= 6) $("b-tr-skip").hidden = false;
+    if (strokes >= Math.max(6, text.length * 2)) $("b-tr-skip").hidden = false;
   };
   $("b-tr-clear").onclick = () => { if (!ok) { reset(); $("tr-status").textContent = "Traza la sílaba otra vez"; } };
   $("b-tr-skip").onclick = () => { if (G === g && !ok) { ok = true; $("trace").hidden = true; done(); } };
