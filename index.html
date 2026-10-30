@@ -217,6 +217,9 @@ input.bigin{font-family:var(--f-display);font-size:1.5rem;padding:14px 16px;text
 .rp-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .rp-word{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .rp-word .emo{font-size:1.6rem}
+.maze-cv{display:block;margin:0 auto;touch-action:none;border:3px solid var(--edge);border-radius:16px;background:var(--paper);max-width:100%}
+#maze-status{text-align:center;font-family:var(--f-display);font-weight:700;font-size:1.15rem;color:var(--ink)}
+.build.rot .bd-box{transform:rotate(90deg);max-width:none;flex:none;animation:none}
 #confetti{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:30}
 .shake{animation:shake .4s}
 @keyframes shake{20%{transform:translateX(-10px)}40%{transform:translateX(10px)}60%{transform:translateX(-6px)}80%{transform:translateX(6px)}}
@@ -371,6 +374,7 @@ input.bigin{font-family:var(--f-display);font-size:1.5rem;padding:14px 16px;text
   <div class="bigs">
     <button class="bigbtn go" id="b-prize-gato" type="button"><span class="emo">⭕</span>Gato</button>
     <button class="bigbtn go" id="b-prize-memo" type="button"><span class="emo">🃏</span>Memorama</button>
+    <button class="bigbtn go" id="b-prize-maze" type="button"><span class="emo">🌀</span>Laberinto</button>
     <button class="bigbtn" id="b-prize-skip" type="button"><span class="emo">🏁</span>Ver resultados</button>
   </div>
 </section>
@@ -382,6 +386,17 @@ input.bigin{font-family:var(--f-display);font-size:1.5rem;padding:14px 16px;text
   <div class="row" style="justify-content:center">
     <button class="btn" id="b-memo-other" type="button">Otro premio</button>
     <button class="btn primary" id="b-memo-done" type="button">Ver resultados</button>
+  </div>
+</section>
+
+<section id="v-maze" class="wrap narrow" hidden>
+  <h1 class="home-title"><span class="emo">🌀</span> Laberinto</h1>
+  <canvas id="maze-canvas" class="maze-cv" role="img" aria-label="Laberinto"></canvas>
+  <p class="status" id="maze-status" aria-live="polite"></p>
+  <div class="row" style="justify-content:center">
+    <button class="btn" id="b-maze-new" type="button">Otro laberinto</button>
+    <button class="btn" id="b-maze-other" type="button">Otro premio</button>
+    <button class="btn primary" id="b-maze-done" type="button">Ver resultados</button>
   </div>
 </section>
 
@@ -474,7 +489,7 @@ const AVAS = ["🦊","🐻","🐼","🐯","🦄","🐸","🐙","🐵"];
 const ROUNDS = 10;
 const $ = id => document.getElementById(id);
 const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
-const VIEWS = ["v-lobby","v-who","v-newkid","v-friend","v-puzzles","v-settings","v-report","v-wait","v-game","v-prize","v-gato","v-memo","v-results"];
+const VIEWS = ["v-lobby","v-who","v-newkid","v-friend","v-puzzles","v-settings","v-report","v-wait","v-game","v-prize","v-gato","v-memo","v-maze","v-results"];
 const show = v => {
   VIEWS.forEach(id => $(id).hidden = id !== v);
   if (v === "v-lobby") renderHome(); else if (v === "v-who") renderWho(); else if (v === "v-puzzles") renderLobbyPuzzle(); else if (v === "v-settings") { renderSettings(); renderPzSizes(); } else if (v === "v-report") renderReport();
@@ -1121,7 +1136,8 @@ document.querySelectorAll("#pz-sizes button").forEach(b => b.onclick = () => {
 });
 
 // ---------- arma la palabra (después de cada acierto) ----------
-function hideExtras(){ ["build", "trace", "complete", "reveal"].forEach(id => $(id).hidden = true); }
+function hideExtras(){ ["build", "trace", "complete", "reveal"].forEach(id => $(id).hidden = true); $("trace").classList.remove("rot"); if (traceResize) { removeEventListener("resize", traceResize); traceResize = null; } }
+let traceResize = null;
 // Arrastre genérico: mueve el elemento con el dedo y al soltar avisa en qué punto quedó.
 function draggable(node, onDrop){
   let d = null;
@@ -1212,7 +1228,18 @@ function startTrace(r, done){
   const g = G, text = r.t[1];
   hideExtras();
   const cv = $("tr-canvas"), dpr = window.devicePixelRatio || 1;
-  const W = Math.min(520, innerWidth - 72), H = Math.round(Math.min(W * .62, 230));
+  // Palabras de más de 5 letras con el celular vertical: el cuadro se gira para tener más espacio.
+  const rot = text.length > 5 && innerHeight > innerWidth;
+  $("trace").classList.toggle("rot", rot);
+  const W = rot ? Math.min(760, innerHeight - 110) : Math.min(innerWidth > innerHeight ? 760 : 520, innerWidth - 72);
+  const H = rot ? Math.round(Math.max(120, Math.min(230, innerWidth - 230))) : Math.round(Math.min(W * .62, 230, innerHeight - 260));
+  const wide = rot || innerWidth > innerHeight, box = $("trace").querySelector(".bd-box");
+  box.style.width = wide ? (W + 48) + "px" : ""; box.style.maxWidth = wide ? "none" : "";
+  // Si giran el celular a mitad de la palabra, se vuelve a acomodar.
+  const wasPortrait = innerHeight > innerWidth;
+  if (traceResize) removeEventListener("resize", traceResize);
+  traceResize = () => { if (ok || G !== g || (innerHeight > innerWidth) === wasPortrait) return; removeEventListener("resize", traceResize); traceResize = null; startTrace(r, done); };
+  addEventListener("resize", traceResize);
   cv.style.width = W + "px"; cv.style.height = H + "px"; cv.width = W * dpr; cv.height = H * dpr;
   const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
   const font = tok("--f-display"), base = H * .74;
@@ -1265,7 +1292,10 @@ function startTrace(r, done){
     });
   };
   const reset = () => { pts.forEach(p => p.hit = false); strokes = []; inkLen = 0; guide(false); bar(); };
-  const pos = e => { const b = cv.getBoundingClientRect(); return [e.clientX - b.left, e.clientY - b.top]; };
+  // Con el cuadro girado 90°, se convierte la posición del dedo a las coordenadas del dibujo.
+  const pos = e => { const b = cv.getBoundingClientRect();
+    if (!rot) return [e.clientX - b.left, e.clientY - b.top];
+    const dx = e.clientX - (b.left + b.width / 2), dy = e.clientY - (b.top + b.height / 2); return [W / 2 + dy, H / 2 - dx]; };
   cv.onpointerdown = e => {
     if (ok || G !== g) return; audio(); cv.setPointerCapture(e.pointerId);
     const p = pos(e); cur = { pts: [p], n: 0, on: 0, len: 0, newHits: [], doneBefore: lettersDone().filter(Boolean).length }; visit(...p, cur);
@@ -1298,13 +1328,13 @@ function startTrace(r, done){
       tone(330, 0, .15, "triangle");
     } else {
       strokes.push(s); inkLen += s.len;
-      if (inkLen > 2.2 * skelLen + 60) { reset(); $("tr-status").textContent = "Hay muchas rayas. Vamos a escribirla otra vez, con calma."; tone(330, 0, .15, "triangle"); if (tries >= Math.max(8, text.length * 3)) $("b-tr-skip").hidden = false; return; }
+      if (inkLen > 3.5 * skelLen + 120) { reset(); $("tr-status").textContent = "Hay muchas rayas. Vamos a escribirla otra vez, con calma."; tone(330, 0, .15, "triangle"); if (tries >= Math.max(8, text.length * 3)) $("b-tr-skip").hidden = false; return; }
       guide(false);
       const doneL = lettersDone(), allDone = doneL.every(Boolean);
-      if (allDone && coverage() >= .85 && inkLen <= 2 * skelLen + 60) {
+      if (allDone && coverage() >= .85 && inkLen <= 3 * skelLen + 100) {
         ok = true; guide(true); $("tr-bar").style.width = "100%";
         $("tr-status").textContent = "¡Excelente! " + text; sfx.good(); confetti(cv);
-        setTimeout(() => { if (G === g) say([text], () => { if (G === g) { $("trace").hidden = true; done(); } }); }, 700);
+        setTimeout(() => { if (G === g) say([text], () => { if (G === g) { hideExtras(); done(); } }); }, 700);
         return;
       }
       const next = doneL.findIndex(d => !d);
@@ -1314,9 +1344,10 @@ function startTrace(r, done){
     if (tries >= Math.max(8, text.length * 3)) $("b-tr-skip").hidden = false;
   };
   $("b-tr-clear").onclick = () => { if (!ok) { reset(); $("tr-status").textContent = "Escribe la palabra otra vez"; } };
-  $("b-tr-skip").onclick = () => { if (G === g && !ok) { ok = true; $("trace").hidden = true; done(); } };
+  $("b-tr-skip").onclick = () => { if (G === g && !ok) { ok = true; hideExtras(); done(); } };
   $("b-tr-skip").hidden = true; $("tr-status").textContent = `Empieza por la "${text[0]}" y sigue los puntitos`;
   $("tr-syl").textContent = text;
+  if (rot) $("tr-status").textContent = "🔄 Gira tu celular y escribe la palabra";
   reset(); $("trace").hidden = false;
 }
 
@@ -1503,6 +1534,95 @@ function flipMemo(i){
   }
   drawMemo();
 }
+
+// ---------- laberinto (premio opcional): se arrastra el personaje hasta el regalo ----------
+const DIRS = [[-1, 0], [0, 1], [1, 0], [0, -1]]; // arriba, derecha, abajo, izquierda
+let maze = null;
+// Laberinto perfecto con "backtracking": siempre hay un solo camino entre dos casillas.
+function makeMaze(n){
+  const walls = Array.from({ length: n }, () => Array.from({ length: n }, () => [1, 1, 1, 1]));
+  const seen = Array.from({ length: n }, () => Array(n).fill(false)), stack = [[0, 0]]; seen[0][0] = true;
+  while (stack.length) {
+    const [r, c] = stack[stack.length - 1];
+    const opts = DIRS.map(([dr, dc], d) => [r + dr, c + dc, d]).filter(([rr, cc]) => rr >= 0 && cc >= 0 && rr < n && cc < n && !seen[rr][cc]);
+    if (!opts.length) { stack.pop(); continue; }
+    const [rr, cc, d] = opts[Math.floor(Math.random() * opts.length)];
+    walls[r][c][d] = 0; walls[rr][cc][(d + 2) % 4] = 0; seen[rr][cc] = true; stack.push([rr, cc]);
+  }
+  return walls;
+}
+function startMaze(){
+  const n = [5, 7, 9][(level || 1) - 1] || 5;
+  const ranked = G ? G.players.slice().sort((a, b) => b.score - a.score) : [];
+  const kid = G ? (G.mode === "online" ? G.players[0] : ranked[0]) : { ava: myAva };
+  maze = { n, walls: makeMaze(n), pos: [0, 0], path: [[0, 0]], done: false, drag: false, kid, bumpAt: 0 };
+  $("maze-status").textContent = "Arrastra tu personaje hasta el regalo 🎁";
+  show("v-maze");
+  const cv = $("maze-canvas"); sizeCanvas(cv, Math.min(360, innerWidth - 48)); drawMaze();
+}
+function drawMaze(){
+  const cv = $("maze-canvas"), c = cv.getContext("2d"), S = cv.width, m = maze, cell = S / m.n;
+  c.clearRect(0, 0, S, S); c.fillStyle = tok("--paper"); c.fillRect(0, 0, S, S);
+  const mid = ([r, cc]) => [cc * cell + cell / 2, r * cell + cell / 2];
+  // camino recorrido
+  c.strokeStyle = tok("--accent"); c.globalAlpha = .45; c.lineWidth = cell * .3; c.lineCap = "round"; c.lineJoin = "round";
+  c.beginPath(); m.path.forEach((p, i) => i ? c.lineTo(...mid(p)) : c.moveTo(...mid(p))); c.stroke(); c.globalAlpha = 1;
+  // paredes
+  c.strokeStyle = tok("--ink"); c.lineWidth = Math.max(3, cell * .09); c.lineCap = "round";
+  c.beginPath();
+  for (let r = 0; r < m.n; r++) for (let cc = 0; cc < m.n; cc++) {
+    const x = cc * cell, y = r * cell, w = m.walls[r][cc];
+    if (w[0]) { c.moveTo(x, y); c.lineTo(x + cell, y); }
+    if (w[3]) { c.moveTo(x, y); c.lineTo(x, y + cell); }
+    if (w[1] && cc === m.n - 1) { c.moveTo(x + cell, y); c.lineTo(x + cell, y + cell); }
+    if (w[2] && r === m.n - 1) { c.moveTo(x, y + cell); c.lineTo(x + cell, y + cell); }
+  }
+  c.stroke();
+  // regalo y personaje
+  c.font = `${cell * .62}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`; c.textAlign = "center"; c.textBaseline = "middle";
+  if (!m.done) c.fillText("🎁", ...mid([m.n - 1, m.n - 1]));
+  c.fillText(m.done ? "🎉" : m.kid.ava, ...mid(m.pos));
+  cv.setAttribute("aria-label", `Laberinto de ${m.n} por ${m.n}. Estás en la fila ${m.pos[0] + 1}, columna ${m.pos[1] + 1}.`);
+}
+// Avanza una casilla a la vez hacia donde está el dedo, solo en la dirección que marca el dedo:
+// si hay pared se detiene (no busca otro camino por su cuenta).
+function mazeMoveToward(tr, tc){
+  const m = maze; let moved = false;
+  for (let guard = 0; guard < 4 * m.n && !m.done; guard++) {
+    const [r, c] = m.pos; if (r === tr && c === tc) break;
+    const want = [];
+    if (tr !== r) want.push(tr > r ? 2 : 0);
+    if (tc !== c) want.push(tc > c ? 1 : 3);
+    if (Math.abs(tc - c) > Math.abs(tr - r)) want.reverse();
+    const d = want[0];
+    if (m.walls[r][c][d]) { const now = performance.now(); if (now - m.bumpAt > 350) { m.bumpAt = now; tone(200, 0, .08, "triangle", .12); } break; }
+    const np = [r + DIRS[d][0], c + DIRS[d][1]], prev = m.path[m.path.length - 2];
+    if (prev && prev[0] === np[0] && prev[1] === np[1]) m.path.pop(); else m.path.push(np);
+    m.pos = np; moved = true;
+    if (np[0] === m.n - 1 && np[1] === m.n - 1) {
+      m.done = true; m.drag = false;
+      $("maze-status").textContent = "¡Llegaste al regalo! 🎉"; sfx.win(); confetti($("maze-canvas"));
+    }
+  }
+  if (moved) { tone(760, 0, .04, "triangle", .08); drawMaze(); }
+}
+(() => {
+  const cv = $("maze-canvas");
+  const cellAt = e => { const b = cv.getBoundingClientRect(), n = maze.n; return [Math.min(n - 1, Math.max(0, Math.floor((e.clientY - b.top) / b.height * n))), Math.min(n - 1, Math.max(0, Math.floor((e.clientX - b.left) / b.width * n)))]; };
+  cv.addEventListener("pointerdown", e => {
+    if (!maze || maze.done) return; audio();
+    const [r, c] = cellAt(e), [pr, pc] = maze.pos;
+    if (Math.abs(r - pr) + Math.abs(c - pc) > 1) { $("maze-status").textContent = "Pon tu dedo sobre tu personaje y arrástralo"; return; }
+    maze.drag = true; cv.setPointerCapture(e.pointerId); mazeMoveToward(r, c);
+  });
+  cv.addEventListener("pointermove", e => { if (maze && maze.drag) mazeMoveToward(...cellAt(e)); });
+  const end = () => { if (maze) maze.drag = false; };
+  cv.addEventListener("pointerup", end); cv.addEventListener("pointercancel", end);
+})();
+$("b-prize-maze").onclick = () => { audio(); startMaze(); };
+$("b-maze-new").onclick = () => startMaze();
+$("b-maze-other").onclick = () => { maze = null; show("v-prize"); };
+$("b-maze-done").onclick = () => { maze = null; $("b-memo-done").onclick(); };
 
 // ---------- en línea ----------
 let lobby = null, R = null, named = false, me = null, code = "", counting = false, cheered = false;
