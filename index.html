@@ -158,7 +158,7 @@ label.lbl{font-weight:700;display:block;margin-bottom:6px}
 .bd-box{width:100%;max-width:560px;background:var(--card);border:3px solid var(--accent);border-radius:28px;padding:18px;display:flex;flex-direction:column;align-items:center;gap:12px;box-shadow:var(--shadow);animation:rvIn .35s cubic-bezier(.3,1.5,.5,1)}
 .bd-box{position:relative}
 .bd-x{position:absolute;top:10px;right:10px;width:40px;height:40px;border-radius:50%;border:2px solid var(--edge);background:var(--card);color:var(--muted);font-size:1.1rem;font-weight:800;display:flex;align-items:center;justify-content:center}
-.bd-title{font-family:var(--f-display);font-weight:800;font-size:clamp(1.5rem,6.5vw,2.1rem);text-align:center}
+.bd-title{padding:0 40px;font-family:var(--f-display);font-weight:800;font-size:clamp(1.5rem,6.5vw,2.1rem);text-align:center}
 .tr-syl{color:var(--accent)}
 .bd-pic{font-size:clamp(3.4rem,15vw,5rem);line-height:1}
 .bd-slots{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;padding:10px 12px;border-radius:16px;background-image:linear-gradient(180deg,transparent 30%,var(--rule) 30% calc(30% + 2px),transparent calc(30% + 2px) 70%,var(--rule) 70% calc(70% + 2px),transparent calc(70% + 2px))}
@@ -1174,6 +1174,40 @@ function startBuild(r, done){
 }
 
 // ---------- traza la sílaba con el dedo (cada 3 rondas) ----------
+// Adelgaza la letra hasta su línea central (algoritmo Zhang-Suen): es el camino que la mano debe recorrer.
+function skeletonize(mask, W, H){
+  const m = Uint8Array.from(mask), at = (x, y) => (x < 0 || y < 0 || x >= W || y >= H) ? 0 : m[y * W + x];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const step of [0, 1]) {
+      const del = [];
+      for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+        if (!m[y * W + x]) continue;
+        const p = [at(x, y - 1), at(x + 1, y - 1), at(x + 1, y), at(x + 1, y + 1), at(x, y + 1), at(x - 1, y + 1), at(x - 1, y), at(x - 1, y - 1)];
+        const b = p.reduce((a, v) => a + v, 0); if (b < 2 || b > 6) continue;
+        let a = 0; for (let i = 0; i < 8; i++) if (!p[i] && p[(i + 1) % 8]) a++;
+        if (a !== 1) continue;
+        if (step === 0 ? (p[0] * p[2] * p[4] || p[2] * p[4] * p[6]) : (p[0] * p[2] * p[6] || p[0] * p[4] * p[6])) continue;
+        del.push(y * W + x);
+      }
+      if (del.length) { changed = true; del.forEach(i => m[i] = 0); }
+    }
+  }
+  return m;
+}
+// Distancia (en px) de cada punto a la letra más cercana; 0 encima de la letra.
+function distanceMap(mask, W, H){
+  const d = new Float32Array(W * H).fill(1e9);
+  for (let i = 0; i < W * H; i++) if (mask[i]) d[i] = 0;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = y * W + x;
+    if (x > 0) d[i] = Math.min(d[i], d[i - 1] + 1); if (y > 0) d[i] = Math.min(d[i], d[i - W] + 1);
+    if (x > 0 && y > 0) d[i] = Math.min(d[i], d[i - W - 1] + 1.414); if (x < W - 1 && y > 0) d[i] = Math.min(d[i], d[i - W + 1] + 1.414); }
+  for (let y = H - 1; y >= 0; y--) for (let x = W - 1; x >= 0; x--) { const i = y * W + x;
+    if (x < W - 1) d[i] = Math.min(d[i], d[i + 1] + 1); if (y < H - 1) d[i] = Math.min(d[i], d[i + W] + 1);
+    if (x < W - 1 && y < H - 1) d[i] = Math.min(d[i], d[i + W + 1] + 1.414); if (x > 0 && y < H - 1) d[i] = Math.min(d[i], d[i + W - 1] + 1.414); }
+  return d;
+}
 function startTrace(r, done){
   const g = G, text = r.t[1];
   hideExtras();
@@ -1183,56 +1217,105 @@ function startTrace(r, done){
   const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
   const font = tok("--f-display"), base = H * .74;
   let fs = H * .7; c.font = `700 ${fs}px ${font}`;
-  const tw = c.measureText(text).width; if (tw > W * .9) fs *= W * .9 / tw;
-  // Puntos objetivo: dónde está la letra (se dibuja rellena fuera de pantalla y se muestrea cada 6 px).
+  const tw0 = c.measureText(text).width; if (tw0 > W * .9) fs *= W * .9 / tw0;
+  c.font = `700 ${fs}px ${font}`;
+  const tw = c.measureText(text).width, x0 = W / 2 - tw / 2;
+  // Dónde empieza y termina cada letra (para revisarlas una por una)
+  const edges = [...text].map((_, i) => x0 + c.measureText(text.slice(0, i)).width).concat(x0 + tw);
+  const letterOf = x => { for (let i = 0; i < text.length; i++) if (x < edges[i + 1]) return i; return text.length - 1; };
   const off = document.createElement("canvas"); off.width = W; off.height = H;
-  const oc = off.getContext("2d"); oc.font = `700 ${fs}px ${font}`; oc.textAlign = "center"; oc.fillStyle = "#000"; oc.fillText(text, W / 2, base);
-  const img = oc.getImageData(0, 0, W, H).data, targets = [];
-  for (let y = 0; y < H; y += 6) for (let x = 0; x < W; x += 6) if (img[(y * W + x) * 4 + 3] > 128) targets.push({ x, y, hit: false });
-  let ink = 0, inkNear = 0, strokes = 0, ok = false, last = null;
+  const oc = off.getContext("2d"); oc.font = `700 ${fs}px ${font}`; oc.textAlign = "left"; oc.fillStyle = "#000"; oc.fillText(text, x0, base);
+  const img = oc.getImageData(0, 0, W, H).data, mask = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) mask[i] = img[i * 4 + 3] > 128 ? 1 : 0;
+  const skel = skeletonize(mask, W, H), dist = distanceMap(mask, W, H);
+  const pts = []; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (skel[y * W + x]) pts.push({ x, y, l: letterOf(x), hit: false });
+  // Rejilla para encontrar rápido los puntos del esqueleto cerca del dedo
+  const CELL = 16, grid = new Map();
+  pts.forEach((p, i) => { const k = (p.x / CELL | 0) + "," + (p.y / CELL | 0); (grid.get(k) || grid.set(k, []).get(k)).push(i); });
+  const rCov = Math.max(10, fs * .16), rOn = Math.max(8, fs * .13);
+  const perLetter = [...text].map((_, i) => pts.filter(p => p.l === i).length);
+  const skelLen = pts.length;
+  let strokes = [], cur = null, ok = false, tries = 0, inkLen = 0;
+  const lettersDone = () => perLetter.map((n, i) => n === 0 || pts.filter(p => p.l === i && p.hit).length / n >= .8);
   const guide = (win) => {
     c.clearRect(0, 0, W, H);
     c.strokeStyle = tok("--rule"); c.lineWidth = 2;
     [base - fs * .72, base - fs * .5, base, base + fs * .2].forEach((y, i) => { c.setLineDash(i % 2 ? [] : [6, 6]); c.beginPath(); c.moveTo(8, y); c.lineTo(W - 8, y); c.stroke(); });
-    c.font = `700 ${fs}px ${font}`; c.textAlign = "center";
-    c.fillStyle = win ? tok("--ok") : tok("--edge"); c.globalAlpha = win ? 1 : .55; c.fillText(text, W / 2, base); c.globalAlpha = 1;
-    if (!win) { c.setLineDash([2, 7]); c.lineCap = "round"; c.lineWidth = Math.max(2.5, fs * .035); c.strokeStyle = tok("--muted"); c.strokeText(text, W / 2, base); }
-    c.setLineDash([]);
+    c.setLineDash([]); c.font = `700 ${fs}px ${font}`; c.textAlign = "left";
+    const doneL = lettersDone();
+    c.fillStyle = win ? tok("--ok") : tok("--edge"); c.globalAlpha = win ? 1 : .55; c.fillText(text, x0, base); c.globalAlpha = 1;
+    if (!win) {
+      // Las letras ya bien escritas se pintan de verde
+      doneL.forEach((d, i) => { if (!d || !perLetter[i]) return; c.save(); c.beginPath(); c.rect(edges[i], 0, edges[i + 1] - edges[i], H); c.clip(); c.fillStyle = tok("--ok"); c.fillText(text, x0, base); c.restore(); });
+      c.setLineDash([2, 7]); c.lineCap = "round"; c.lineWidth = Math.max(2.5, fs * .035); c.strokeStyle = tok("--muted"); c.strokeText(text, x0, base); c.setLineDash([]);
+      c.strokeStyle = tok("--accent"); c.lineWidth = 12; c.lineCap = "round"; c.lineJoin = "round"; c.globalAlpha = .8;
+      strokes.forEach(s => { c.beginPath(); s.pts.forEach(([x, y], k) => k ? c.lineTo(x, y) : c.moveTo(x, y)); c.stroke(); }); c.globalAlpha = 1;
+    }
   };
-  const reset = () => { targets.forEach(t => t.hit = false); ink = inkNear = 0; guide(false); $("tr-bar").style.width = "0%"; };
-  const progress = () => targets.length ? targets.filter(t => t.hit).length / targets.length : 1;
-  const mark = (x, y) => {
-    ink++; let near = false;
-    for (const t of targets) { const dd = (t.x - x) ** 2 + (t.y - y) ** 2; if (dd < 196) t.hit = true; if (dd < 324) near = true; }
-    if (near) inkNear++;
+  const coverage = () => skelLen ? pts.filter(p => p.hit).length / skelLen : 1;
+  const bar = () => { $("tr-bar").style.width = Math.round(coverage() * 100) + "%"; };
+  // Un punto del dedo: ¿está sobre la letra? ¿qué parte del esqueleto cubre?
+  const visit = (x, y, s) => {
+    const xi = Math.round(x), yi = Math.round(y);
+    const on = xi >= 0 && yi >= 0 && xi < W && yi < H && dist[yi * W + xi] <= rOn;
+    s.n++; if (on) s.on++;
+    const cx = x / CELL | 0, cy = y / CELL | 0, R = Math.ceil(rCov / CELL);
+    for (let gx = cx - R; gx <= cx + R; gx++) for (let gy = cy - R; gy <= cy + R; gy++) (grid.get(gx + "," + gy) || []).forEach(i => {
+      const p = pts[i]; if (!p.hit && (p.x - x) ** 2 + (p.y - y) ** 2 <= rCov * rCov) { p.hit = true; s.newHits.push(i); }
+    });
   };
+  const reset = () => { pts.forEach(p => p.hit = false); strokes = []; inkLen = 0; guide(false); bar(); };
   const pos = e => { const b = cv.getBoundingClientRect(); return [e.clientX - b.left, e.clientY - b.top]; };
-  cv.onpointerdown = e => { if (ok || G !== g) return; audio(); cv.setPointerCapture(e.pointerId); last = pos(e); mark(...last); };
+  cv.onpointerdown = e => {
+    if (ok || G !== g) return; audio(); cv.setPointerCapture(e.pointerId);
+    const p = pos(e); cur = { pts: [p], n: 0, on: 0, len: 0, newHits: [], doneBefore: lettersDone().filter(Boolean).length }; visit(...p, cur);
+  };
   cv.onpointermove = e => {
-    if (!last || ok) return;
-    const p = pos(e);
-    c.strokeStyle = tok("--accent"); c.lineWidth = 12; c.lineCap = "round"; c.lineJoin = "round"; c.globalAlpha = .85;
+    if (!cur || ok) return;
+    const p = pos(e), last = cur.pts[cur.pts.length - 1], d = Math.hypot(p[0] - last[0], p[1] - last[1]);
+    if (d < 1.5) return;
+    c.strokeStyle = tok("--accent"); c.lineWidth = 12; c.lineCap = "round"; c.globalAlpha = .8;
     c.beginPath(); c.moveTo(...last); c.lineTo(...p); c.stroke(); c.globalAlpha = 1;
-    // Rellena los puntos intermedios para que un trazo rápido también cuente.
-    const steps = Math.ceil(Math.hypot(p[0] - last[0], p[1] - last[1]) / 4);
-    for (let k = 1; k <= steps; k++) mark(last[0] + (p[0] - last[0]) * k / steps, last[1] + (p[1] - last[1]) * k / steps);
-    last = p; $("tr-bar").style.width = Math.round(progress() * 100) + "%";
+    const steps = Math.ceil(d / 3);
+    for (let k = 1; k <= steps; k++) visit(last[0] + (p[0] - last[0]) * k / steps, last[1] + (p[1] - last[1]) * k / steps, cur);
+    cur.len += d; cur.pts.push(p); bar();
   };
   cv.onpointerup = cv.onpointercancel = () => {
-    if (!last || ok) return; last = null; strokes++;
-    const cov = progress(), prec = ink ? inkNear / ink : 0;
-    if (cov >= .7 && prec >= .5) {
-      ok = true; guide(true); $("tr-bar").style.width = "100%";
-      $("tr-status").textContent = "¡Excelente! " + text; sfx.good(); confetti(cv);
-      setTimeout(() => { if (G === g) say([text], () => { if (G === g) { $("trace").hidden = true; done(); } }); }, 700);
-      return;
+    if (!cur || ok) return;
+    const s = cur; cur = null; tries++;
+    // Rayar no cuenta: si el trazo se sale de la letra o es mucho más largo de lo que cubre, se borra.
+    const prec = s.n ? s.on / s.n : 0, useful = s.newHits.length;
+    // Vueltas bruscas (más de 120°): una letra real tiene pocas; un rayón, muchas.
+    const rs = [s.pts[0]]; s.pts.forEach(q => { const l = rs[rs.length - 1]; if (Math.hypot(q[0] - l[0], q[1] - l[1]) >= 8) rs.push(q); });
+    let turns = 0;
+    for (let k = 1; k < rs.length - 1; k++) { const ax = rs[k][0] - rs[k - 1][0], ay = rs[k][1] - rs[k - 1][1], bx = rs[k + 1][0] - rs[k][0], by = rs[k + 1][1] - rs[k][1];
+      if ((ax * bx + ay * by) / (Math.hypot(ax, ay) * Math.hypot(bx, by) || 1) < -.5) turns++; }
+    const touched = new Set(s.newHits.map(i => pts[i].l)).size;
+    const scribble = s.len > 30 && (prec < .7 || s.len > 2 * useful + 30 || turns > 2 * Math.max(1, touched) + 1);
+    if (scribble) {
+      s.newHits.forEach(i => pts[i].hit = false); guide(false); bar();
+      $("tr-status").textContent = "¡Así no! Escribe la letra siguiendo los puntitos, sin rayar.";
+      tone(330, 0, .15, "triangle");
+    } else {
+      strokes.push(s); inkLen += s.len;
+      if (inkLen > 2.2 * skelLen + 60) { reset(); $("tr-status").textContent = "Hay muchas rayas. Vamos a escribirla otra vez, con calma."; tone(330, 0, .15, "triangle"); if (tries >= Math.max(8, text.length * 3)) $("b-tr-skip").hidden = false; return; }
+      guide(false);
+      const doneL = lettersDone(), allDone = doneL.every(Boolean);
+      if (allDone && coverage() >= .85 && inkLen <= 2 * skelLen + 60) {
+        ok = true; guide(true); $("tr-bar").style.width = "100%";
+        $("tr-status").textContent = "¡Excelente! " + text; sfx.good(); confetti(cv);
+        setTimeout(() => { if (G === g) say([text], () => { if (G === g) { $("trace").hidden = true; done(); } }); }, 700);
+        return;
+      }
+      const next = doneL.findIndex(d => !d);
+      $("tr-status").textContent = next >= 0 ? `¡Bien! Ahora escribe la "${text[next]}"` : "¡Casi! Repasa las partes que faltan";
+      if (doneL.filter(Boolean).length > s.doneBefore) tone(880, 0, .08, "triangle");
     }
-    $("tr-status").textContent = prec < .5 ? "Traza encima de los puntitos" : "¡Sigue los puntitos!";
-    if (strokes >= Math.max(6, text.length * 2)) $("b-tr-skip").hidden = false;
+    if (tries >= Math.max(8, text.length * 3)) $("b-tr-skip").hidden = false;
   };
-  $("b-tr-clear").onclick = () => { if (!ok) { reset(); $("tr-status").textContent = "Traza la sílaba otra vez"; } };
+  $("b-tr-clear").onclick = () => { if (!ok) { reset(); $("tr-status").textContent = "Escribe la palabra otra vez"; } };
   $("b-tr-skip").onclick = () => { if (G === g && !ok) { ok = true; $("trace").hidden = true; done(); } };
-  $("b-tr-skip").hidden = true; $("tr-status").textContent = "Pasa tu dedo por los puntitos";
+  $("b-tr-skip").hidden = true; $("tr-status").textContent = `Empieza por la "${text[0]}" y sigue los puntitos`;
   $("tr-syl").textContent = text;
   reset(); $("trace").hidden = false;
 }
