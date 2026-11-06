@@ -486,7 +486,7 @@ const WORDS = [
   ["pas","pastel","🎂",3,["pas","tel"]],["cam","campana","🔔",3,["cam","pa","na"]],["hor","hormiga","🐜",3,["hor","mi","ga"]]
 ];
 const AVAS = ["🦊","🐻","🐼","🐯","🦄","🐸","🐙","🐵"];
-const ROUNDS = 10;
+const ROUNDS = 3;
 const $ = id => document.getElementById(id);
 const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
 const VIEWS = ["v-lobby","v-who","v-newkid","v-friend","v-puzzles","v-settings","v-report","v-wait","v-game","v-prize","v-gato","v-memo","v-maze","v-results"];
@@ -1803,7 +1803,7 @@ function startLocal(two, p2){
   audio();
   const players = [{ nick: myNick(), ava: myAva }];
   if (two && p2) players.push({ nick: p2.nick, ava: p2.ava });
-  startGame("local", players, makeDeck(Math.floor(Math.random() * 2 ** 31), two ? 12 : ROUNDS, level));
+  startGame("local", players, makeDeck(Math.floor(Math.random() * 2 ** 31), two ? ROUNDS * 2 : ROUNDS, level));
 }
 $("b-solo").onclick = () => startLocal(false);
 $("b-again").onclick = () => {
